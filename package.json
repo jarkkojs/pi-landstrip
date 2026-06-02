@@ -1,0 +1,54 @@
+{
+  "name": "pi-landstrip",
+  "version": "0.1.0",
+  "description": "Landlock-based sandboxing for pi with interactive permission prompts",
+  "keywords": [
+    "landstrip",
+    "pi-extension",
+    "pi-package",
+    "sandbox"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jarkkojs/pi-landstrip.git"
+  },
+  "files": [
+    "index.ts",
+    "README.md",
+    "sandbox.json"
+  ],
+  "type": "module",
+  "scripts": {
+    "fmt": "oxfmt index.ts package.json tsconfig.json sandbox.json .oxfmtrc.json README.md",
+    "lint": "oxlint index.ts",
+    "check": "tsc --noEmit",
+    "all": "npm run fmt && npm run lint && npm run check",
+    "ci:fmt": "oxfmt --check index.ts package.json tsconfig.json sandbox.json .oxfmtrc.json README.md",
+    "ci:lint": "npm run lint",
+    "ci:check": "npm run check"
+  },
+  "dependencies": {
+    "@earendil-works/pi-tui": "^0.78.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.78.0",
+    "@types/node": "^24.0.0",
+    "oxfmt": "^0.53.0",
+    "oxlint": "^1.68.0",
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.78.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}

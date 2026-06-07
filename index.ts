@@ -100,7 +100,7 @@ const DEFAULT_CONFIG: SandboxConfig = {
   },
   filesystem: {
     denyRead: ['/Users', '/home'],
-    allowRead: ['.', '~/.config', '~/.local', '~/.cargo'],
+    allowRead: ['.', '~/.config', '~/.gitconfig', '~/.local', '~/.cargo'],
     allowWrite: ['.', '/tmp'],
     denyWrite: ['.env', '.env.*', '*.pem', '*.key'],
   },

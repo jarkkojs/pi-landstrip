@@ -11,7 +11,7 @@ Install `landstrip` and make sure it is on the `PATH` used to launch pi:
 cargo install landstrip
 ```
 
-`landstrip` currently targets Linux. On other platforms this extension loads
+`landstrip` supports Linux, macOS, and Windows. On other platforms this extension loads
 but leaves sandboxing disabled.
 
 ## Install

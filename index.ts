@@ -80,7 +80,7 @@ interface LandstripErrorResponse {
   source: string;
 }
 
-const LANDSTRIP_VERSION = [0, 11, 3] as const;
+const LANDSTRIP_VERSION = [0, 11, 5] as const;
 const SUPPORTED_PLATFORMS = new Set<NodeJS.Platform>(['linux', 'darwin', 'win32']);
 
 const DEFAULT_CONFIG: SandboxConfig = {
@@ -226,9 +226,6 @@ function addReadPathToConfig(configPath: string, pathToAdd: string): void {
   config.filesystem = {
     ...config.filesystem,
     allowRead: [...existing, pathToAdd],
-    denyRead: config.filesystem?.denyRead ?? [],
-    allowWrite: config.filesystem?.allowWrite ?? [],
-    denyWrite: config.filesystem?.denyWrite ?? [],
   } as SandboxFilesystemConfig;
   writeConfigFile(configPath, config);
 }
@@ -241,9 +238,6 @@ function addWritePathToConfig(configPath: string, pathToAdd: string): void {
   config.filesystem = {
     ...config.filesystem,
     allowWrite: [...existing, pathToAdd],
-    denyRead: config.filesystem?.denyRead ?? [],
-    allowRead: config.filesystem?.allowRead ?? [],
-    denyWrite: config.filesystem?.denyWrite ?? [],
   } as SandboxFilesystemConfig;
   writeConfigFile(configPath, config);
 }
@@ -337,19 +331,30 @@ function normalizeBlockedPath(path: string, cwd: string): string {
   return canonicalizePath(isAbsolute(path) ? path : join(cwd, path));
 }
 
+function isPathLike(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    trimmed === '~' ||
+    trimmed.startsWith('/') ||
+    trimmed.startsWith('~/') ||
+    trimmed.startsWith('./') ||
+    trimmed.startsWith('../') ||
+    trimmed.startsWith('.') ||
+    trimmed.includes('/')
+  );
+}
+
+function normalizePathMatch(value: string, cwd: string): string | null {
+  return isPathLike(value) ? normalizeBlockedPath(value, cwd) : null;
+}
+
 function extractCandidatePaths(command: string): string[] {
   const paths: string[] = [];
   // Split on whitespace, preserving quoted strings minimally
   const tokens = command.match(/[^\s"']+|"[^"]*"|'[^']*'/g) ?? [];
   for (const token of tokens) {
     const clean = token.replace(/^["']|["']$/g, '').replace(/[,;]$/, '');
-    if (
-      clean.startsWith('/') ||
-      clean.startsWith('~/') ||
-      clean === '~' ||
-      clean.startsWith('./') ||
-      clean.startsWith('../')
-    ) {
+    if (isPathLike(clean)) {
       paths.push(clean);
     }
   }
@@ -361,13 +366,13 @@ function extractBlockedPath(output: string, cwd: string, command?: string): stri
   let match = output.match(
     /(?:\/bin\/bash|bash|sh): (?:line \d+: )?([^:\n]+): (?:Operation not permitted|Permission denied)/,
   );
-  if (match) return normalizeBlockedPath(match[1], cwd);
+  if (match) return normalizePathMatch(match[1], cwd);
 
   // ls/cat/cp: cannot open/access/stat '/path': Permission denied
   match = output.match(
     /^[a-zA-Z0-9_-]+: cannot (?:open|access|stat|create)(?: directory)? '?([^'\n]+?)'?(?: for (?:reading|writing))?: Permission denied$/m,
   );
-  if (match) return normalizeBlockedPath(match[1], cwd);
+  if (match) return normalizePathMatch(match[1], cwd);
 
   // Generic: cmd: /absolute/path: Permission denied or Operation not permitted
   match = output.match(
@@ -386,7 +391,7 @@ function extractBlockedPath(output: string, cwd: string, command?: string): stri
   if (landstripErrors.length > 0 && command) {
     const config = loadConfig(cwd);
     for (const candidate of extractCandidatePaths(command)) {
-      const resolved = canonicalizePath(candidate);
+      const resolved = normalizeBlockedPath(candidate, cwd);
       if (
         matchesPattern(resolved, config.filesystem.denyRead) ||
         !matchesPattern(resolved, config.filesystem.allowRead)
@@ -1251,7 +1256,7 @@ export function createLandstripIntegration(
     if (!hasMinimumVersion(version, LANDSTRIP_VERSION)) {
       sandboxEnabled = false;
       sandboxReady = false;
-      ctx.ui.notify(`landstrip 0.11.3 or newer is required; found: ${version}`, 'error');
+      ctx.ui.notify(`landstrip 0.11.5 or newer is required; found: ${version}`, 'error');
       return false;
     }
 

@@ -116,28 +116,14 @@ const DEFAULT_CONFIG: SandboxConfig = {
     allowLocalBinding: false,
     allowAllUnixSockets: false,
     allowUnixSockets: [],
-    allowedDomains: [
-      'npmjs.org',
-      '*.npmjs.org',
-      'registry.npmjs.org',
-      'registry.yarnpkg.com',
-      'pypi.org',
-      '*.pypi.org',
-      'github.com',
-      '*.github.com',
-      'api.github.com',
-      'raw.githubusercontent.com',
-      'crates.io',
-      '*.crates.io',
-      'static.crates.io',
-    ],
+    allowedDomains: [],
     deniedDomains: [],
   },
   filesystem: {
     denyRead: ['/Users', '/home'],
-    allowRead: ['.', '~/.config', '~/.gitconfig', '~/.local', '~/.cargo', '/dev/null'],
-    allowWrite: ['.', '/tmp', '/dev/null'],
-    denyWrite: ['.env', '.env.*', '*.pem', '*.key'],
+    allowRead: ['.', '~/.gitconfig', '/dev/null'],
+    allowWrite: ['.', '/dev/null'],
+    denyWrite: ['**/.env', '**/.env.*', '**/*.pem', '**/*.key'],
   },
 };
 
@@ -196,16 +182,30 @@ function loadConfig(cwd: string): SandboxConfig {
   return deepMerge(deepMerge(DEFAULT_CONFIG, globalConfig), projectConfig);
 }
 
+function mergeArray(base: string[], override?: string[]): string[] {
+  if (!override) return base;
+  return [...new Set([...base, ...override])];
+}
+
 function deepMerge(base: SandboxConfig, overrides: Partial<SandboxConfig>): SandboxConfig {
+  const network = overrides.network;
+  const filesystem = overrides.filesystem;
+
   return {
     enabled: overrides.enabled ?? base.enabled,
     network: {
-      ...base.network,
-      ...overrides.network,
+      allowNetwork: network?.allowNetwork ?? base.network.allowNetwork,
+      allowLocalBinding: network?.allowLocalBinding ?? base.network.allowLocalBinding,
+      allowAllUnixSockets: network?.allowAllUnixSockets ?? base.network.allowAllUnixSockets,
+      allowUnixSockets: mergeArray(base.network.allowUnixSockets, network?.allowUnixSockets),
+      allowedDomains: mergeArray(base.network.allowedDomains, network?.allowedDomains),
+      deniedDomains: mergeArray(base.network.deniedDomains, network?.deniedDomains),
     },
     filesystem: {
-      ...base.filesystem,
-      ...overrides.filesystem,
+      denyRead: mergeArray(base.filesystem.denyRead, filesystem?.denyRead),
+      allowRead: mergeArray(base.filesystem.allowRead, filesystem?.allowRead),
+      allowWrite: mergeArray(base.filesystem.allowWrite, filesystem?.allowWrite),
+      denyWrite: mergeArray(base.filesystem.denyWrite, filesystem?.denyWrite),
     },
   };
 }

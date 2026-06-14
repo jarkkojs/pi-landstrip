@@ -36,6 +36,7 @@ import {
   getShellConfig,
   isToolCallEventType,
   SettingsManager,
+  withFileMutationQueue,
 } from '@earendil-works/pi-coding-agent';
 import { Key, matchesKey, truncateToWidth, visibleWidth } from '@earendil-works/pi-tui';
 
@@ -128,6 +129,7 @@ const DEFAULT_CONFIG: SandboxConfig = {
 };
 
 type PermissionChoice = 'abort' | 'session' | 'project' | 'global';
+type NotificationLevel = Parameters<ExtensionContext['ui']['notify']>[1];
 
 interface PromptOption {
   label: string;
@@ -231,41 +233,47 @@ function writeConfigFile(configPath: string, config: Partial<SandboxConfig>): vo
   writeFileSync(configPath, JSON.stringify(config, null, 2) + '\n', 'utf-8');
 }
 
-function addDomainToConfig(configPath: string, domain: string): void {
-  const config = readOrEmptyConfig(configPath);
-  const existing = config.network?.allowedDomains ?? [];
-  if (existing.includes(domain)) return;
+async function addDomainToConfig(configPath: string, domain: string): Promise<void> {
+  await withFileMutationQueue(configPath, async () => {
+    const config = readOrEmptyConfig(configPath);
+    const existing = config.network?.allowedDomains ?? [];
+    if (existing.includes(domain)) return;
 
-  config.network = {
-    ...config.network,
-    allowedDomains: [...existing, domain],
-    deniedDomains: config.network?.deniedDomains ?? [],
-  } as SandboxNetworkConfig;
-  writeConfigFile(configPath, config);
+    config.network = {
+      ...config.network,
+      allowedDomains: [...existing, domain],
+      deniedDomains: config.network?.deniedDomains ?? [],
+    } as SandboxNetworkConfig;
+    writeConfigFile(configPath, config);
+  });
 }
 
-function addReadPathToConfig(configPath: string, pathToAdd: string): void {
-  const config = readOrEmptyConfig(configPath);
-  const existing = config.filesystem?.allowRead ?? [];
-  if (existing.includes(pathToAdd)) return;
+async function addReadPathToConfig(configPath: string, pathToAdd: string): Promise<void> {
+  await withFileMutationQueue(configPath, async () => {
+    const config = readOrEmptyConfig(configPath);
+    const existing = config.filesystem?.allowRead ?? [];
+    if (existing.includes(pathToAdd)) return;
 
-  config.filesystem = {
-    ...config.filesystem,
-    allowRead: [...existing, pathToAdd],
-  } as SandboxFilesystemConfig;
-  writeConfigFile(configPath, config);
+    config.filesystem = {
+      ...config.filesystem,
+      allowRead: [...existing, pathToAdd],
+    } as SandboxFilesystemConfig;
+    writeConfigFile(configPath, config);
+  });
 }
 
-function addWritePathToConfig(configPath: string, pathToAdd: string): void {
-  const config = readOrEmptyConfig(configPath);
-  const existing = config.filesystem?.allowWrite ?? [];
-  if (existing.includes(pathToAdd)) return;
+async function addWritePathToConfig(configPath: string, pathToAdd: string): Promise<void> {
+  await withFileMutationQueue(configPath, async () => {
+    const config = readOrEmptyConfig(configPath);
+    const existing = config.filesystem?.allowWrite ?? [];
+    if (existing.includes(pathToAdd)) return;
 
-  config.filesystem = {
-    ...config.filesystem,
-    allowWrite: [...existing, pathToAdd],
-  } as SandboxFilesystemConfig;
-  writeConfigFile(configPath, config);
+    config.filesystem = {
+      ...config.filesystem,
+      allowWrite: [...existing, pathToAdd],
+    } as SandboxFilesystemConfig;
+    writeConfigFile(configPath, config);
+  });
 }
 
 function extractDomainsFromCommand(command: string): string[] {
@@ -545,6 +553,21 @@ function formatLandstripErrors(errors: LandstripErrorResponse[]): string {
       return parts.join('');
     })
     .join('\n');
+}
+
+function notify(ctx: ExtensionContext, message: string, level: NotificationLevel): void {
+  if (!ctx.hasUI) return;
+  ctx.ui.notify(message, level);
+}
+
+function hasTuiStatus(ctx: ExtensionContext): boolean {
+  const { mode } = ctx as ExtensionContext & { mode?: string };
+  return mode === undefined ? ctx.hasUI : mode === 'tui';
+}
+
+function setTuiStatus(ctx: ExtensionContext, key: string, value: string | undefined): void {
+  if (!hasTuiStatus(ctx)) return;
+  ctx.ui.setStatus(key, value);
 }
 
 async function showPermissionPrompt(
@@ -857,6 +880,12 @@ export function createLandstripIntegration(
   const sessionAllowedReadPaths: string[] = [];
   const sessionAllowedWritePaths: string[] = [];
 
+  function resetSessionAllowances(): void {
+    sessionAllowedDomains.length = 0;
+    sessionAllowedReadPaths.length = 0;
+    sessionAllowedWritePaths.length = 0;
+  }
+
   function getEffectiveAllowedDomains(cwd: string): string[] {
     const config = loadConfig(cwd);
     return [...config.network.allowedDomains, ...sessionAllowedDomains];
@@ -879,8 +908,8 @@ export function createLandstripIntegration(
   ): Promise<void> {
     const { globalPath, projectPath } = getConfigPaths(cwd);
     if (!sessionAllowedDomains.includes(domain)) sessionAllowedDomains.push(domain);
-    if (choice === 'project') addDomainToConfig(projectPath, domain);
-    if (choice === 'global') addDomainToConfig(globalPath, domain);
+    if (choice === 'project') await addDomainToConfig(projectPath, domain);
+    if (choice === 'global') await addDomainToConfig(globalPath, domain);
   }
 
   async function applyReadChoice(
@@ -890,8 +919,8 @@ export function createLandstripIntegration(
   ): Promise<void> {
     const { globalPath, projectPath } = getConfigPaths(cwd);
     if (!sessionAllowedReadPaths.includes(filePath)) sessionAllowedReadPaths.push(filePath);
-    if (choice === 'project') addReadPathToConfig(projectPath, filePath);
-    if (choice === 'global') addReadPathToConfig(globalPath, filePath);
+    if (choice === 'project') await addReadPathToConfig(projectPath, filePath);
+    if (choice === 'global') await addReadPathToConfig(globalPath, filePath);
   }
 
   async function applyWriteChoice(
@@ -901,8 +930,8 @@ export function createLandstripIntegration(
   ): Promise<void> {
     const { globalPath, projectPath } = getConfigPaths(cwd);
     if (!sessionAllowedWritePaths.includes(filePath)) sessionAllowedWritePaths.push(filePath);
-    if (choice === 'project') addWritePathToConfig(projectPath, filePath);
-    if (choice === 'global') addWritePathToConfig(globalPath, filePath);
+    if (choice === 'project') await addWritePathToConfig(projectPath, filePath);
+    if (choice === 'global') await addWritePathToConfig(globalPath, filePath);
   }
 
   async function ensureDomainAllowed(
@@ -1201,7 +1230,7 @@ export function createLandstripIntegration(
               const landstripErrors = parseLandstripErrors(errorOutput);
               if (landstripErrors.length > 0) {
                 const formatted = formatLandstripErrors(landstripErrors);
-                ctx.ui.notify(`Sandbox blocked an operation: ${formatted}`, 'warning');
+                notify(ctx, `Sandbox blocked an operation: ${formatted}`, 'warning');
               }
             }
 
@@ -1242,7 +1271,8 @@ export function createLandstripIntegration(
       let config = loadConfig(ctx.cwd);
       const { globalPath, projectPath } = getConfigPaths(ctx.cwd);
       if (matchesPattern(blockedPath, config.filesystem.denyWrite)) {
-        ctx.ui.notify(
+        notify(
+          ctx,
           `"${blockedPath}" is blocked by denyWrite. Check:\n  ${projectPath}\n  ${globalPath}`,
           'warning',
         );
@@ -1257,7 +1287,8 @@ export function createLandstripIntegration(
 
       config = loadConfig(ctx.cwd);
       if (matchesPattern(blockedPath, config.filesystem.denyWrite)) {
-        ctx.ui.notify(
+        notify(
+          ctx,
           `"${blockedPath}" was added to allowWrite, but denyWrite still blocks it. Check:\n  ${projectPath}\n  ${globalPath}`,
           'warning',
         );
@@ -1322,17 +1353,19 @@ export function createLandstripIntegration(
 
   function warnIfAllDomainsAllowed(ctx: ExtensionContext, config: SandboxConfig): void {
     if (config.network.allowNetwork) {
-      ctx.ui.notify('Network sandbox is disabled because network.allowNetwork is true.', 'warning');
+      notify(ctx, 'Network sandbox is disabled because network.allowNetwork is true.', 'warning');
       return;
     }
     if (!allowsAllDomains(config.network.allowedDomains)) return;
-    ctx.ui.notify(
+    notify(
+      ctx,
       'Network sandbox allows all domains because network.allowedDomains contains "*".',
       'warning',
     );
   }
 
   function enableStatus(ctx: ExtensionContext, config: SandboxConfig): void {
+    if (!hasTuiStatus(ctx)) return;
     const theme = ctx.ui.theme;
     const dot = theme.fg('success', '●');
     const label = theme.fg('text', 'Sandbox');
@@ -1354,7 +1387,7 @@ export function createLandstripIntegration(
     const net = theme.fg(networkColor, networkLabel);
     const write = theme.fg('accent', `${config.filesystem.allowWrite.length} write paths`);
 
-    ctx.ui.setStatus('sandbox', `${dot} ${label}  ${sep}  ${net}  ${sep}  ${write}`);
+    setTuiStatus(ctx, 'sandbox', `${dot} ${label}  ${sep}  ${net}  ${sep}  ${write}`);
   }
 
   function enableSandbox(ctx: ExtensionContext): boolean {
@@ -1363,7 +1396,7 @@ export function createLandstripIntegration(
     if (!SUPPORTED_PLATFORMS.has(process.platform)) {
       sandboxEnabled = false;
       sandboxReady = false;
-      ctx.ui.notify(`landstrip sandboxing is not supported on ${process.platform}`, 'warning');
+      notify(ctx, `landstrip sandboxing is not supported on ${process.platform}`, 'warning');
       return false;
     }
 
@@ -1371,7 +1404,8 @@ export function createLandstripIntegration(
     if (!version) {
       sandboxEnabled = false;
       sandboxReady = false;
-      ctx.ui.notify(
+      notify(
+        ctx,
         `landstrip was not found. Reinstall with: npm install @jarkkojs/landstrip`,
         'error',
       );
@@ -1381,7 +1415,8 @@ export function createLandstripIntegration(
     if (!hasMinimumVersion(version, LANDSTRIP_VERSION)) {
       sandboxEnabled = false;
       sandboxReady = false;
-      ctx.ui.notify(
+      notify(
+        ctx,
         `landstrip ${REQUIRED_LANDSTRIP_VERSION} or newer is required; found: ${version}`,
         'error',
       );
@@ -1508,12 +1543,13 @@ export function createLandstripIntegration(
     });
 
     pi.on('session_start', async (_event, ctx) => {
+      resetSessionAllowances();
       const noSandbox = maybePi.getFlag?.('no-sandbox') as boolean;
 
       if (noSandbox) {
         sandboxEnabled = false;
         sandboxReady = false;
-        ctx.ui.notify('Sandbox disabled via --no-sandbox', 'warning');
+        notify(ctx, 'Sandbox disabled via --no-sandbox', 'warning');
         return;
       }
 
@@ -1521,7 +1557,7 @@ export function createLandstripIntegration(
       if (!config.enabled) {
         sandboxEnabled = false;
         sandboxReady = false;
-        ctx.ui.notify('Sandbox disabled via config', 'info');
+        notify(ctx, 'Sandbox disabled via config', 'info');
         return;
       }
 
@@ -1532,11 +1568,11 @@ export function createLandstripIntegration(
       description: 'Enable the landstrip sandbox for this session',
       handler: async (_args, ctx) => {
         if (sandboxEnabled) {
-          ctx.ui.notify('Sandbox is already enabled', 'info');
+          notify(ctx, 'Sandbox is already enabled', 'info');
           return;
         }
 
-        if (enableSandbox(ctx)) ctx.ui.notify('Sandbox enabled', 'info');
+        if (enableSandbox(ctx)) notify(ctx, 'Sandbox enabled', 'info');
       },
     });
 
@@ -1544,14 +1580,14 @@ export function createLandstripIntegration(
       description: 'Disable the landstrip sandbox for this session',
       handler: async (_args, ctx) => {
         if (!sandboxEnabled) {
-          ctx.ui.notify('Sandbox is already disabled', 'info');
+          notify(ctx, 'Sandbox is already disabled', 'info');
           return;
         }
 
         sandboxEnabled = false;
         sandboxReady = false;
-        ctx.ui.setStatus('sandbox', undefined);
-        ctx.ui.notify('Sandbox disabled', 'info');
+        setTuiStatus(ctx, 'sandbox', undefined);
+        notify(ctx, 'Sandbox disabled', 'info');
       },
     });
 
@@ -1559,13 +1595,14 @@ export function createLandstripIntegration(
       description: 'Show sandbox configuration',
       handler: async (_args, ctx) => {
         if (!sandboxEnabled) {
-          ctx.ui.notify('Sandbox is disabled', 'info');
+          notify(ctx, 'Sandbox is disabled', 'info');
           return;
         }
 
         const config = loadConfig(ctx.cwd);
         const { globalPath, projectPath } = getConfigPaths(ctx.cwd);
 
+        if (!ctx.hasUI) return;
         await ctx.ui.custom(
           (tui, theme, _kb, done) => {
             const dim = (s: string) => theme.fg('dim', s);
